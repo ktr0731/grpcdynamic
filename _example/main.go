@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/ktr0731/grpcdynamic"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -20,18 +21,26 @@ type res struct {
 }
 
 func main() {
+	service := grpcdynamic.NewService("api.Example")
+	service.RegisterUnaryMethod("Unary", new(req), new(res), func(ctx context.Context, in interface{}) (interface{}, error) {
+		req := in.(*req)
+		return &res{Message: fmt.Sprintf("hi, %s", req.Name)}, nil
+	})
+	srv := grpcdynamic.NewServer([]*grpcdynamic.Service{service})
+	reflection.Register(srv)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	done := make(chan struct{})
 	go func() {
-		if err := startServer(ctx); err != nil {
+		if err := startServer(ctx, srv); err != nil {
 			log.Fatal(err)
 		}
 		close(done)
 	}()
 
-	res, err := callUnaryMethod()
+	res, err := callUnaryMethod(service.FullMethodName("Unary"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -41,15 +50,7 @@ func main() {
 	<-done
 }
 
-func startServer(ctx context.Context) error {
-	service := grpcdynamic.NewService("api.Example")
-	service.RegisterUnaryMethod("Unary", new(req), new(res), func(ctx context.Context, in interface{}) (interface{}, error) {
-		req := in.(*req)
-		return &res{Message: fmt.Sprintf("hi, %s", req.Name)}, nil
-	})
-	srv := grpcdynamic.NewServer([]*grpcdynamic.Service{service})
-	reflection.Register(srv)
-
+func startServer(ctx context.Context, srv *grpc.Server) error {
 	l, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		return err
@@ -66,7 +67,7 @@ func startServer(ctx context.Context) error {
 	return nil
 }
 
-func callUnaryMethod() (*res, error) {
+func callUnaryMethod(name string) (*res, error) {
 	conn, err := grpc.Dial(
 		":50051",
 		grpc.WithInsecure(),
@@ -78,7 +79,7 @@ func callUnaryMethod() (*res, error) {
 	defer conn.Close()
 
 	var res res
-	if err := conn.Invoke(context.Background(), "/api.Example/Unary", &req{Name: "foo"}, &res); err != nil {
+	if err := conn.Invoke(context.Background(), name, &req{Name: "foo"}, &res); err != nil {
 		return nil, err
 	}
 	return &res, nil
